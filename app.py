@@ -1,51 +1,46 @@
 
 import os
 import sqlite3
+import math
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
-
-from flask import Flask, jsonify, request
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
 
-DATABASE = os.environ.get("DATABASE_PATH", "finance.db")
+DATABASE_PATH = os.environ.get("DATABASE_PATH", "finance.db")
 
 INCOME_CATEGORIES = {
-    "Salary", "Business", "Investment", "Gift", "Other"
+    "Salary", "Business", "Investment", "Gift"
 }
 
 EXPENSE_CATEGORIES = {
-    "Food", "Transport", "Shopping", "Bills", "Education",
-    "Health", "Entertainment", "Other"
+    "Food", "Transport", "Shopping", "Bills",
+    "Education", "Health", "Entertainment", "Other"
 }
 
 
-def get_db():
-    db = sqlite3.connect(DATABASE, timeout=20)
+def connect_db():
+    db = sqlite3.connect(DATABASE_PATH, timeout=15)
     db.row_factory = sqlite3.Row
     return db
 
 
 def init_db():
-    folder = os.path.dirname(DATABASE)
-    if folder:
-        os.makedirs(folder, exist_ok=True)
-
-    with get_db() as db:
+    with connect_db() as db:
         db.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
-                amount REAL NOT NULL CHECK(amount > 0),
-                type TEXT NOT NULL CHECK(type IN ('income', 'expense')),
+                amount REAL NOT NULL,
+                type TEXT NOT NULL,
                 category TEXT NOT NULL,
-                date TEXT NOT NULL
+                date TEXT NOT NULL,
+                priority TEXT NOT NULL DEFAULT 'essential'
             )
         """)
 
-        # Add priority to an existing database without deleting records.
         columns = {
             row["name"]
             for row in db.execute("PRAGMA table_info(transactions)")
@@ -60,146 +55,152 @@ def init_db():
         db.execute("""
             CREATE TABLE IF NOT EXISTS budgets (
                 month TEXT PRIMARY KEY,
-                amount REAL NOT NULL CHECK(amount >= 0)
+                amount REAL NOT NULL
             )
         """)
 
 
-def transaction_dict(row):
-    result = dict(row)
-    if "priority" not in result:
-        result["priority"] = "essential"
-    return result
-
-
-def get_transactions():
-    with get_db() as db:
-        rows = db.execute("""
-            SELECT id, title, amount, type, category, date, priority
-            FROM transactions
-            ORDER BY date DESC, id DESC
-        """).fetchall()
-
-    return [transaction_dict(row) for row in rows]
+def valid_month(value):
+    try:
+        datetime.strptime(value, "%Y-%m")
+        return True
+    except (ValueError, TypeError):
+        return False
 
 
 def get_month_totals(month):
-    with get_db() as db:
+    with connect_db() as db:
         row = db.execute("""
             SELECT
-                COALESCE(SUM(CASE WHEN type = 'income'
-                    THEN amount ELSE 0 END), 0) AS income,
-                COALESCE(SUM(CASE WHEN type = 'expense'
-                    THEN amount ELSE 0 END), 0) AS expense,
-                COALESCE(SUM(CASE WHEN type = 'expense'
-                    AND priority = 'essential'
+                COALESCE(SUM(CASE
+                    WHEN type = 'income' THEN amount ELSE 0 END), 0) AS income,
+                COALESCE(SUM(CASE
+                    WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expenses,
+                COALESCE(SUM(CASE
+                    WHEN type = 'expense' AND priority = 'essential'
                     THEN amount ELSE 0 END), 0) AS essential,
-                COALESCE(SUM(CASE WHEN type = 'expense'
-                    AND priority = 'optional'
+                COALESCE(SUM(CASE
+                    WHEN type = 'expense' AND priority = 'optional'
                     THEN amount ELSE 0 END), 0) AS optional
             FROM transactions
             WHERE substr(date, 1, 7) = ?
         """, (month,)).fetchone()
 
+    income = float(row["income"])
+    expenses = float(row["expenses"])
+
     return {
-        "income": round(row["income"], 2),
-        "expense": round(row["expense"], 2),
-        "essential": round(row["essential"], 2),
-        "optional": round(row["optional"], 2)
+        "income": income,
+        "expenses": expenses,
+        "essential": float(row["essential"]),
+        "optional": float(row["optional"]),
+        "balance": income - expenses
     }
 
 
-@app.route("/")
+def get_budget(month):
+    with connect_db() as db:
+        row = db.execute(
+            "SELECT amount FROM budgets WHERE month = ?", (month,)
+        ).fetchone()
+
+    return float(row["amount"]) if row else 0.0
+
+
+@app.get("/")
 def home():
     return jsonify({
-        "message": "FinTrack Smart Money Advisor API is running!",
-        "status": "online"
+        "message": "FinTrack Smart Money Advisor API",
+        "status": "running"
     })
 
 
-@app.route("/api/health")
+@app.get("/api/health")
 def health():
     return jsonify({"status": "ok"})
 
 
-@app.route("/api/transactions", methods=["GET"])
-def list_transactions():
-    return jsonify({"transactions": get_transactions()})
+@app.route("/api/transactions", methods=["GET", "POST"])
+def transactions_api():
+    if request.method == "GET":
+        with connect_db() as db:
+            rows = db.execute("""
+                SELECT * FROM transactions
+                ORDER BY date DESC, id DESC
+            """).fetchall()
 
+        return jsonify({"transactions": [dict(row) for row in rows]})
 
-@app.route("/api/transactions", methods=["POST"])
-def add_transaction():
-    data = request.get_json(silent=True)
+    data = request.get_json(silent=True) or {}
 
-    if not isinstance(data, dict):
-        return jsonify({"error": "A valid JSON object is required."}), 400
+    title = str(data.get("title", "")).strip()
+    category = str(data.get("category", "")).strip()
+    transaction_type = str(data.get("type", "")).strip().lower()
+    priority = str(data.get("priority", "essential")).strip().lower()
+    raw_amount = data.get("amount")
+    transaction_date = str(data.get("date", "")).strip()
 
-    title = data.get("title")
-    category = data.get("category")
-    tx_type = data.get("type")
-    tx_date = data.get("date")
-    priority = data.get("priority", "essential")
+    if not title or len(title) > 100:
+        return jsonify({"error": "Enter a title up to 100 characters."}), 400
 
-    if not isinstance(title, str) or not title.strip():
-        return jsonify({"error": "Transaction title is required."}), 400
+    if transaction_type not in {"income", "expense"}:
+        return jsonify({"error": "Type must be income or expense."}), 400
 
-    title = title.strip()
-    if len(title) > 100:
-        return jsonify({"error": "Title must be 100 characters or fewer."}), 400
+    allowed_categories = (
+        INCOME_CATEGORIES | EXPENSE_CATEGORIES
+    )
 
-    if tx_type not in ("income", "expense"):
-        return jsonify({"error": "Choose income or expense."}), 400
+    if category not in allowed_categories:
+        return jsonify({"error": "Choose a valid category."}), 400
 
-    allowed = INCOME_CATEGORIES if tx_type == "income" else EXPENSE_CATEGORIES
-    if not isinstance(category, str) or category not in allowed:
-        return jsonify({"error": "Invalid category for this transaction type."}), 400
+    if transaction_type == "income" and category not in INCOME_CATEGORIES:
+        return jsonify({"error": "Choose an income category."}), 400
 
-    if priority not in ("essential", "optional"):
-        return jsonify({"error": "Priority must be essential or optional."}), 400
+    if transaction_type == "expense" and category not in EXPENSE_CATEGORIES:
+        return jsonify({"error": "Choose an expense category."}), 400
 
-    if tx_type == "income":
+    if priority not in {"essential", "optional"}:
+        return jsonify({"error": "Invalid expense priority."}), 400
+
+    if transaction_type == "income":
         priority = "essential"
 
     try:
-        amount = Decimal(str(data.get("amount", "")))
-        if (
-            not amount.is_finite()
-            or amount <= 0
-            or amount > Decimal("1000000000")
-        ):
-            raise ValueError
-        amount = float(amount)
-    except (InvalidOperation, ValueError, TypeError):
-        return jsonify({"error": "Enter a valid positive amount."}), 400
+        amount = float(raw_amount)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Enter a valid amount."}), 400
+
+    if not math.isfinite(amount) or not 0 < amount <= 1_000_000_000:
+        return jsonify({"error": "Amount must be greater than zero and within the limit."}), 400
 
     try:
-        parsed_date = date.fromisoformat(tx_date)
-        if parsed_date.isoformat() != tx_date:
-            raise ValueError
-    except (ValueError, TypeError):
-        return jsonify({"error": "Use a valid YYYY-MM-DD date."}), 400
+        parsed_date = date.fromisoformat(transaction_date)
+        if parsed_date.isoformat() != transaction_date:
+            raise ValueError()
+    except ValueError:
+        return jsonify({"error": "Enter a valid date in YYYY-MM-DD format."}), 400
 
-    with get_db() as db:
+    with connect_db() as db:
         cursor = db.execute("""
             INSERT INTO transactions
                 (title, amount, type, category, date, priority)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (title, amount, tx_type, category, tx_date, priority))
+        """, (
+            title, amount, transaction_type,
+            category, transaction_date, priority
+        ))
 
-        row = db.execute("""
-            SELECT id, title, amount, type, category, date, priority
-            FROM transactions WHERE id = ?
-        """, (cursor.lastrowid,)).fetchone()
+        row = db.execute(
+            "SELECT * FROM transactions WHERE id = ?",
+            (cursor.lastrowid,)
+        ).fetchone()
 
-    return jsonify({
-        "message": "Transaction added successfully.",
-        "transaction": transaction_dict(row)
-    }), 201
+    return jsonify(dict(row)), 201
 
 
 @app.route("/api/transactions/<int:transaction_id>", methods=["DELETE"])
 def delete_transaction(transaction_id):
-    with get_db() as db:
+    with connect_db() as db:
         cursor = db.execute(
             "DELETE FROM transactions WHERE id = ?",
             (transaction_id,)
@@ -211,277 +212,211 @@ def delete_transaction(transaction_id):
     return jsonify({"message": "Transaction deleted successfully."})
 
 
-@app.route("/api/summary")
+@app.get("/api/summary")
 def summary():
-    with get_db() as db:
+    with connect_db() as db:
         row = db.execute("""
             SELECT
-                COALESCE(SUM(CASE WHEN type = 'income'
-                    THEN amount ELSE 0 END), 0) AS income,
-                COALESCE(SUM(CASE WHEN type = 'expense'
-                    THEN amount ELSE 0 END), 0) AS expense
+                COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0) AS income,
+                COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0) AS expenses
             FROM transactions
         """).fetchone()
 
-    income = round(row["income"], 2)
-    expense = round(row["expense"], 2)
-    balance = round(income - expense, 2)
+    income = float(row["income"])
+    expenses = float(row["expenses"])
+    balance = income - expenses
+    savings_rate = ((balance / income) * 100) if income > 0 else 0
 
     return jsonify({
         "total_income": income,
-        "total_expense": expense,
+        "total_expense": expenses,
         "balance": balance,
-        "savings_rate": round(balance / income * 100, 1) if income else 0
+        "savings_rate": round(savings_rate, 2)
     })
 
 
-@app.route("/api/analytics/monthly")
+@app.get("/api/analytics/monthly")
 def monthly_analytics():
-    today = date.today()
-    months = []
-
-    year, month = today.year, today.month
-    for _ in range(5):
-        month -= 1
-        if month == 0:
-            month, year = 12, year - 1
-
-    start = f"{year:04d}-{month:02d}-01"
-
-    for _ in range(6):
-        months.append(f"{year:04d}-{month:02d}")
-        month += 1
-        if month == 13:
-            month, year = 1, year + 1
-
-    with get_db() as db:
+    with connect_db() as db:
         rows = db.execute("""
-            SELECT substr(date, 1, 7) AS month,
-                SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) AS income,
-                SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) AS expense
+            SELECT
+                substr(date, 1, 7) AS month,
+                SUM(CASE WHEN type='income' THEN amount ELSE 0 END) AS income,
+                SUM(CASE WHEN type='expense' THEN amount ELSE 0 END) AS expense
             FROM transactions
-            WHERE date >= ?
             GROUP BY substr(date, 1, 7)
-        """, (start,)).fetchall()
+            ORDER BY month DESC
+            LIMIT 6
+        """).fetchall()
 
-    totals = {
-        row["month"]: {
-            "income": round(row["income"], 2),
-            "expense": round(row["expense"], 2)
+    return jsonify([
+        {
+            "month": row["month"],
+            "income": float(row["income"] or 0),
+            "expense": float(row["expense"] or 0)
         }
-        for row in rows
-    }
-
-    return jsonify({
-        "months": [{
-            "month": datetime.strptime(m, "%Y-%m").strftime("%b %y"),
-            "income": totals.get(m, {}).get("income", 0),
-            "expense": totals.get(m, {}).get("expense", 0)
-        } for m in months]
-    })
+        for row in reversed(rows)
+    ])
 
 
-@app.route("/api/analytics/categories")
+@app.get("/api/analytics/categories")
 def category_analytics():
-    with get_db() as db:
+    with connect_db() as db:
         rows = db.execute("""
-            SELECT category, ROUND(SUM(amount), 2) AS total
+            SELECT category, SUM(amount) AS total
             FROM transactions
             WHERE type = 'expense'
             GROUP BY category
             ORDER BY total DESC
         """).fetchall()
 
-    return jsonify({
-        "categories": [
-            {"category": row["category"], "total": row["total"]}
-            for row in rows
-        ]
-    })
+    return jsonify([
+        {"category": row["category"], "total": float(row["total"])}
+        for row in rows
+    ])
 
 
 @app.route("/api/budget", methods=["GET", "POST"])
-def monthly_budget():
+def budget_api():
     month = request.args.get("month", date.today().strftime("%Y-%m"))
 
-    try:
-        if datetime.strptime(month, "%Y-%m").strftime("%Y-%m") != month:
-            raise ValueError
-    except ValueError:
+    if not valid_month(month):
         return jsonify({"error": "Month must use YYYY-MM format."}), 400
 
-    if request.method == "POST":
-        data = request.get_json(silent=True) or {}
+    if request.method == "GET":
+        return jsonify({"month": month, "amount": get_budget(month)})
 
-        try:
-            amount = Decimal(str(data.get("amount", "")))
-            if not amount.is_finite() or amount < 0 or amount > Decimal("1000000000"):
-                raise ValueError
-            amount = float(amount)
-        except (InvalidOperation, ValueError, TypeError):
-            return jsonify({"error": "Enter a valid non-negative budget."}), 400
-
-        with get_db() as db:
-            db.execute("""
-                INSERT INTO budgets (month, amount) VALUES (?, ?)
-                ON CONFLICT(month) DO UPDATE SET amount = excluded.amount
-            """, (month, amount))
-
-    with get_db() as db:
-        row = db.execute(
-            "SELECT amount FROM budgets WHERE month = ?", (month,)
-        ).fetchone()
-
-    return jsonify({
-        "month": month,
-        "budget": row["amount"] if row else 0
-    })
-
-
-@app.route("/api/advisor")
-def smart_advisor():
-    month = request.args.get("month", date.today().strftime("%Y-%m"))
+    data = request.get_json(silent=True) or {}
 
     try:
-        if datetime.strptime(month, "%Y-%m").strftime("%Y-%m") != month:
-            raise ValueError
-    except ValueError:
+        amount = float(data.get("amount"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Enter a valid budget amount."}), 400
+
+    if not math.isfinite(amount) or not 0 < amount <= 1_000_000_000:
+        return jsonify({"error": "Budget must be greater than zero and within the limit."}), 400
+
+    with connect_db() as db:
+        db.execute("""
+            INSERT INTO budgets (month, amount)
+            VALUES (?, ?)
+            ON CONFLICT(month) DO UPDATE SET amount = excluded.amount
+        """, (month, amount))
+
+    return jsonify({"month": month, "amount": amount})
+
+
+@app.get("/api/advisor")
+def advisor():
+    month = request.args.get("month", date.today().strftime("%Y-%m"))
+
+    if not valid_month(month):
         return jsonify({"error": "Month must use YYYY-MM format."}), 400
 
     try:
-        emergency = Decimal(request.args.get("emergency", "0"))
-        reserve = Decimal(request.args.get("reserve", "0"))
+        emergency = float(request.args.get("emergency", "0"))
+        reserve = float(request.args.get("reserve", "0"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Emergency and reserve amounts must be numbers."}), 400
 
-        if (
-            not emergency.is_finite()
-            or not reserve.is_finite()
-            or emergency < 0
-            or reserve < 0
-            or emergency > Decimal("1000000000")
-            or reserve > Decimal("1000000000")
-        ):
-            raise ValueError
-    except (InvalidOperation, ValueError, TypeError):
-        return jsonify({"error": "Enter valid emergency and reserve amounts."}), 400
+    if (
+        not math.isfinite(emergency) or not math.isfinite(reserve)
+        or emergency < 0 or reserve < 0
+        or emergency > 1_000_000_000 or reserve > 1_000_000_000
+    ):
+        return jsonify({"error": "Enter valid non-negative amounts within the limit."}), 400
 
     totals = get_month_totals(month)
-    current_balance = round(totals["income"] - totals["expense"], 2)
-    after_emergency = round(current_balance - float(emergency), 2)
-    after_reserve = round(after_emergency - float(reserve), 2)
+    budget = get_budget(month)
+    income = totals["income"]
+    expenses = totals["expenses"]
+    balance = totals["balance"]
+    optional = totals["optional"]
 
-    with get_db() as db:
-        row = db.execute(
-            "SELECT amount FROM budgets WHERE month = ?", (month,)
-        ).fetchone()
+    after_emergency = balance - emergency
+    after_reserve = after_emergency - reserve
 
-        categories = db.execute("""
-            SELECT category, SUM(amount) AS total
-            FROM transactions
-            WHERE type = 'expense' AND priority = 'optional'
-                AND substr(date, 1, 7) = ?
-            GROUP BY category
-            ORDER BY total DESC
-        """, (month,)).fetchall()
-
-    budget = row["amount"] if row else 0
-    remaining_budget = round(budget - totals["expense"], 2)
     alerts = []
     tips = []
 
-    if totals["income"] == 0 and totals["expense"] > 0:
+    if income == 0:
         alerts.append({
             "level": "warning",
-            "title": "No income recorded",
-            "message": "Expenses are recorded, but no income is recorded for this month. Add your income to improve the analysis."
+            "message": "No income is recorded for this month. Add your income for a more accurate report."
         })
+        tips.append("Record all income before making a spending plan.")
 
-    if current_balance < 0:
+    if balance < 0:
         alerts.append({
             "level": "danger",
-            "title": "Spending exceeds income",
-            "message": f"Your recorded expenses exceed your recorded income by ₹{abs(current_balance):,.2f}."
+            "message": "Your recorded expenses exceed your recorded income."
         })
-        tips.append(
-            "Review optional purchases and upcoming bills. Avoid taking on new debt without checking repayment costs."
-        )
+        tips.append("Pause non-essential purchases and review your recent expenses.")
 
     if budget > 0:
-        used_percent = round(totals["expense"] / budget * 100, 1)
+        percentage = expenses / budget * 100
 
-        if totals["expense"] > budget:
+        if percentage >= 100:
             alerts.append({
                 "level": "danger",
-                "title": "Monthly budget exceeded",
-                "message": f"You have exceeded your ₹{budget:,.2f} budget by ₹{abs(remaining_budget):,.2f} ({used_percent}% used)."
+                "message": f"You have exceeded your monthly budget by ₹{expenses - budget:,.2f}."
             })
-            tips.append(
-                "Pause optional spending and review the largest expense categories before making new purchases."
-            )
-        elif used_percent >= 80:
+            tips.append("Avoid optional spending until you have reviewed your remaining needs.")
+        elif percentage >= 80:
             alerts.append({
                 "level": "warning",
-                "title": "Budget running low",
-                "message": f"You have used {used_percent}% of your monthly budget. ₹{remaining_budget:,.2f} remains."
+                "message": f"You have used {percentage:.1f}% of your monthly budget."
             })
-            tips.append(
-                "Keep the remaining budget for essential needs and delay non-urgent purchases."
-            )
+            tips.append("You are approaching your budget limit. Prioritize essential purchases.")
         else:
-            tips.append(
-                f"You have used {used_percent}% of your monthly budget. Your recorded spending is currently within the limit."
-            )
+            tips.append(f"You have ₹{budget - expenses:,.2f} remaining in your monthly budget.")
     else:
-        tips.append(
-            "Set a monthly expense budget to receive budget-use percentages and overspending alerts."
-        )
+        tips.append("Set a monthly budget to receive more useful overspending alerts.")
 
-    if categories:
-        top = categories[0]
-        tips.append(
-            f"Your largest optional-spending category is {top['category']} at ₹{top['total']:,.2f}. Review it for possible reductions."
-        )
+    if optional > 0:
+        tips.append(f"Review your optional expenses, currently ₹{optional:,.2f}, to find possible savings.")
 
-    if after_emergency < 0:
+    if emergency > 0:
+        if after_emergency < 0:
+            alerts.append({
+                "level": "danger",
+                "message": "Your recorded monthly balance would not cover the unexpected expense."
+            })
+        else:
+            alerts.append({
+                "level": "success",
+                "message": f"After this unexpected expense, the estimated amount left is ₹{after_emergency:,.2f}, before reserved bills."
+            })
+
+    if reserve > 0 and after_reserve < 0:
         alerts.append({
             "level": "danger",
-            "title": "Emergency expense exceeds your balance",
-            "message": f"This expense would leave a shortfall of ₹{abs(after_emergency):,.2f}, before reserved bills."
+            "message": "The emergency expense and reserved bills together exceed your recorded monthly balance."
         })
-        tips.append(
-            "Check available emergency savings, whether the payment can be reduced or delayed, and what safe support options are available."
-        )
-    elif after_emergency < float(reserve):
-        alerts.append({
-            "level": "warning",
-            "title": "Essential bills may be at risk",
-            "message": f"After the emergency expense, ₹{after_emergency:,.2f} remains, below the ₹{float(reserve):,.2f} reserve you entered."
-        })
-        tips.append(
-            "Protect essential bills first and review optional expenses before committing to further purchases."
-        )
-    else:
-        tips.append(
-            f"After the emergency expense and your stated reserve, ₹{after_reserve:,.2f} remains unreserved."
-        )
+        tips.append("Check whether the expense can be delayed or paid in installments, if appropriate.")
+    elif reserve > 0:
+        tips.append(f"After the emergency expense and reserved bills, the estimate is ₹{after_reserve:,.2f}.")
+
+    if balance > 0 and income > 0:
+        tips.append("Consider setting aside part of your remaining income for savings and emergencies.")
 
     if not alerts:
         alerts.append({
             "level": "success",
-            "title": "No immediate warning detected",
-            "message": "Your recorded figures do not currently trigger the rules above. Keep recording transactions and review upcoming bills."
+            "message": "No immediate budget warning based on the information recorded."
         })
 
     return jsonify({
         "month": month,
-        "income": totals["income"],
-        "expenses": totals["expense"],
+        "income": income,
+        "expenses": expenses,
         "essential_expenses": totals["essential"],
-        "optional_expenses": totals["optional"],
-        "balance": current_balance,
+        "optional_expenses": optional,
+        "balance": balance,
         "budget": budget,
-        "remaining_budget": remaining_budget,
-        "emergency_expense": float(emergency),
-        "reserved_bills": float(reserve),
+        "remaining_budget": budget - expenses if budget else None,
+        "emergency_expense": emergency,
+        "reserved_bills": reserve,
         "after_emergency": after_emergency,
         "after_reserve": after_reserve,
         "alerts": alerts,
@@ -494,5 +429,6 @@ init_db()
 if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
-        port=int(os.environ.get("PORT", 5000))
+        port=int(os.environ.get("PORT", 5000)),
+        debug=False
     )

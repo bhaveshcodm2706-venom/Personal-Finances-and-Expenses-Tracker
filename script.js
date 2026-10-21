@@ -1,23 +1,30 @@
 
-const API_URL = "https://personal-finances-and-expenses-tracker.onrender.com"
-let transactions = [];
-let monthlyChart = null;
-let categoryChart = null;
+const API_URL = "https://YOUR-RENDER-SERVICE.onrender.com";
 
 const $ = (id) => document.getElementById(id);
 
+let monthlyChart = null;
+let categoryChart = null;
+let transactions = [];
+let budgetAmount = 0;
+
 function money(value) {
-  return new Intl.NumberFormat("en-IN", {
+  return Number(value || 0).toLocaleString("en-IN", {
     style: "currency",
     currency: "INR",
     maximumFractionDigits: 2
-  }).format(Number(value) || 0);
+  });
 }
 
-function showMessage(message, type = "") {
-  const el = $("formMessage");
-  el.textContent = message;
-  el.className = `form-message ${type}`;
+function currentMonth() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function today() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
 }
 
 async function api(path, options = {}) {
@@ -38,238 +45,222 @@ async function api(path, options = {}) {
   return data;
 }
 
-function setConnection(online) {
-  $("connection").textContent = online ? "API connected" : "API unavailable";
-  const dot = document.querySelector(".live-dot");
-  dot.style.background = online ? "#48dfb0" : "#ff8294";
-  dot.style.boxShadow = online
-    ? "0 0 10px #48dfb066"
-    : "0 0 10px #ff829466";
+function showMessage(id, message, success = false) {
+  $(id).textContent = message;
+  $(id).style.color = success ? "#35e0b0" : "#ff9aaa";
 }
 
-function setToday() {
-  const now = new Date();
-  $("date").value = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0")
-  ].join("-");
-}
-
-function updateCategoryOptions() {
-  const type = document.querySelector('input[name="type"]:checked').value;
-  const select = $("category");
-  const previous = select.value;
-
-  const categories = type === "income"
-    ? ["Salary", "Business", "Investment", "Gift", "Other"]
-    : ["Food", "Transport", "Shopping", "Bills", "Education",
-       "Health", "Entertainment", "Other"];
-
-  select.replaceChildren();
-
-  categories.forEach(category => {
-    const option = document.createElement("option");
-    option.value = category;
-    option.textContent = category;
-    select.appendChild(option);
-  });
-
-  if (categories.includes(previous)) select.value = previous;
-}
-
-function renderSummary(summary) {
-  $("totalIncome").textContent = money(summary.total_income);
-  $("totalExpense").textContent = money(summary.total_expense);
-  $("currentBalance").textContent = money(summary.balance);
-  $("savingsRate").textContent = `${summary.savings_rate}%`;
-}
-
-function renderMonthlyChart(rows) {
-  const labels = rows.map(item => item.month);
-  const income = rows.map(item => item.income);
-  const expenses = rows.map(item => item.expense);
-
-  if (monthlyChart) monthlyChart.destroy();
-
-  monthlyChart = new Chart($("monthlyChart"), {
-    type: "bar",
-    data: {
-      labels,
-      datasets: [
-        {
-          label: "Income",
-          data: income,
-          backgroundColor: "#48dfb0",
-          borderRadius: 5
-        },
-        {
-          label: "Expenses",
-          data: expenses,
-          backgroundColor: "#a78bfa",
-          borderRadius: 5
-        }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: { duration: 650 },
-      plugins: {
-        legend: {
-          labels: { color: "#aeb7d0", usePointStyle: true, boxWidth: 8 }
-        },
-        tooltip: {
-          callbacks: {
-            label: context => `${context.dataset.label}: ${money(context.raw)}`
-          }
-        }
-      },
-      scales: {
-        x: {
-          ticks: { color: "#929bb6", maxRotation: 0 },
-          grid: { display: false }
-        },
-        y: {
-          beginAtZero: true,
-          ticks: {
-            color: "#929bb6",
-            callback: value => "₹" + Number(value).toLocaleString("en-IN")
-          },
-          grid: { color: "#ffffff0b" }
-        }
-      }
-    }
-  });
-}
-
-function renderCategoryChart(rows) {
-  const canvas = $("categoryChart");
-  const empty = $("categoryEmpty");
-
-  if (categoryChart) {
-    categoryChart.destroy();
-    categoryChart = null;
-  }
-
-  if (!rows.length) {
-    canvas.style.display = "none";
-    empty.style.display = "block";
-    return;
-  }
-
-  canvas.style.display = "block";
-  empty.style.display = "none";
-
-  categoryChart = new Chart(canvas, {
-    type: "doughnut",
-    data: {
-      labels: rows.map(item => item.category),
-      datasets: [{
-        data: rows.map(item => item.total),
-        backgroundColor: [
-          "#a78bfa", "#48dfb0", "#6f9dff", "#ff8294",
-          "#f6c76b", "#57c7dc", "#ed91d3", "#a5b4fc"
-        ],
-        borderColor: "#191e32",
-        borderWidth: 4,
-        hoverOffset: 7
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      cutout: "68%",
-      plugins: {
-        legend: {
-          position: "bottom",
-          labels: {
-            color: "#aeb7d0",
-            usePointStyle: true,
-            boxWidth: 8,
-            padding: 14
-          }
-        },
-        tooltip: {
-          callbacks: {
-            label: context => `${context.label}: ${money(context.raw)}`
-          }
-        }
-      }
-    }
-  });
-}
-
-function formatDate(value) {
-  if (!value) return "—";
-  const [year, month, day] = value.split("-");
-  return `${day}/${month}/${year}`;
+function renderSummary(data) {
+  $("totalIncome").textContent = money(data.total_income);
+  $("totalExpense").textContent = money(data.total_expense);
+  $("currentBalance").textContent = money(data.balance);
+  $("savingsRate").textContent = `${Number(data.savings_rate || 0).toFixed(1)}%`;
 }
 
 function renderTransactions() {
-  const query = $("searchInput").value.trim().toLowerCase();
+  const search = $("searchInput").value.trim().toLowerCase();
 
-  const filtered = transactions.filter(item =>
-    item.title.toLowerCase().includes(query) ||
-    item.category.toLowerCase().includes(query) ||
-    item.type.toLowerCase().includes(query)
+  const filtered = transactions.filter((t) =>
+    `${t.title} ${t.category} ${t.date} ${t.type}`
+      .toLowerCase()
+      .includes(search)
   );
 
   const tbody = $("transactionList");
   tbody.replaceChildren();
 
   if (!filtered.length) {
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
-    td.colSpan = 4;
-    td.className = "empty";
-    td.textContent = transactions.length
-      ? "No matching transactions found."
-      : "No transactions yet. Add your first transaction!";
-    tr.appendChild(td);
-    tbody.appendChild(tr);
+    const row = tbody.insertRow();
+    const cell = row.insertCell();
+    cell.colSpan = 4;
+    cell.textContent = "No transactions found.";
   }
 
-  filtered.forEach(item => {
-    const tr = document.createElement("tr");
-    const titleCell = document.createElement("td");
-    const title = document.createElement("span");
-    const category = document.createElement("span");
+  filtered.forEach((t) => {
+    const row = tbody.insertRow();
 
-    title.className = "tx-title";
-    title.textContent = item.title;
-    category.className = "tx-category";
-    category.textContent = item.category;
-    titleCell.append(title, category);
+    const titleCell = row.insertCell();
+    const title = document.createElement("strong");
+    title.textContent = t.title;
+    titleCell.appendChild(title);
 
-    const amountCell = document.createElement("td");
-    amountCell.className = item.type === "income"
-      ? "amount-income" : "amount-expense";
+    const category = document.createElement("div");
+    category.className = "muted";
+    category.textContent = `${t.category} · ${t.priority || "essential"}`;
+    titleCell.appendChild(category);
+
+    const amountCell = row.insertCell();
     amountCell.textContent =
-      `${item.type === "income" ? "+" : "−"}${money(item.amount)}`;
+      `${t.type === "income" ? "+" : "−"}${money(t.amount)}`;
+    amountCell.style.color = t.type === "income" ? "#35e0b0" : "#ff7185";
 
-    const dateCell = document.createElement("td");
-    dateCell.textContent = formatDate(item.date);
+    row.insertCell().textContent = t.date;
 
-    const actionCell = document.createElement("td");
-    const deleteButton = document.createElement("button");
-    deleteButton.className = "delete-btn";
-    deleteButton.textContent = "Delete";
-    deleteButton.setAttribute("aria-label", `Delete ${item.title}`);
-    deleteButton.addEventListener("click", () => deleteTransaction(item.id));
-    actionCell.appendChild(deleteButton);
-
-    tr.append(titleCell, amountCell, dateCell, actionCell);
-    tbody.appendChild(tr);
+    const actionCell = row.insertCell();
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Delete";
+    button.addEventListener("click", () => deleteTransaction(t.id));
+    actionCell.appendChild(button);
   });
 
   $("transactionCount").textContent =
     `${filtered.length} transaction${filtered.length === 1 ? "" : "s"}`;
 }
 
+function renderMonthlyChart(data) {
+  const context = $("monthlyChart").getContext("2d");
+
+  if (monthlyChart) monthlyChart.destroy();
+
+  monthlyChart = new Chart(context, {
+    type: "bar",
+    data: {
+      labels: data.map((item) => item.month),
+      datasets: [
+        {
+          label: "Income",
+          data: data.map((item) => item.income),
+          backgroundColor: "#35e0b0"
+        },
+        {
+          label: "Expenses",
+          data: data.map((item) => item.expense),
+          backgroundColor: "#ff7185"
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: { color: "#9caed1" },
+          grid: { color: "#303952" }
+        },
+        x: {
+          ticks: { color: "#9caed1" },
+          grid: { display: false }
+        }
+      },
+      plugins: {
+        legend: { labels: { color: "#f4f6ff" } }
+      }
+    }
+  });
+}
+
+function renderCategoryChart(data) {
+  if (categoryChart) categoryChart.destroy();
+
+  categoryChart = new Chart($("categoryChart"), {
+    type: "doughnut",
+    data: {
+      labels: data.map((item) => item.category),
+      datasets: [{
+        data: data.map((item) => item.total),
+        backgroundColor: [
+          "#a18aff", "#71a0ff", "#35e0b0", "#ff7185",
+          "#ffcc66", "#f18aff", "#63d5e8", "#a6d96a"
+        ]
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { color: "#f4f6ff" }
+        }
+      }
+    }
+  });
+}
+
+async function loadAdvisor() {
+  const month = currentMonth();
+  const emergency = Number($("emergencyAmount").value || 0);
+  const reserve = Number($("reservedBills").value || 0);
+
+  const [budgetData, advisorData] = await Promise.all([
+    api(`/api/budget?month=${month}`),
+    api(`/api/advisor?month=${month}&emergency=${emergency}&reserve=${reserve}`)
+  ]);
+
+  budgetAmount = budgetData.amount || 0;
+
+  if (document.activeElement !== $("monthlyBudget")) {
+    $("monthlyBudget").value = budgetAmount || "";
+  }
+
+  renderAdvisor(advisorData);
+}
+
+function renderAdvisor(data) {
+  const expenses = Number(data.expenses || 0);
+  const budget = Number(data.budget || 0);
+  const percentage = budget > 0 ? Math.round(expenses / budget * 100) : 0;
+
+  $("budgetPercent").textContent = `${percentage}% used`;
+  $("budgetBar").style.width = `${Math.min(percentage, 100)}%`;
+  $("budgetBar").style.background =
+    percentage >= 100 ? "#ff7185" :
+    percentage >= 80 ? "#ffcc66" :
+    "linear-gradient(90deg, #a18aff, #71a0ff)";
+
+  if (!budget) {
+    $("budgetStatus").textContent = "Set a monthly budget to track spending.";
+  } else if (percentage >= 100) {
+    $("budgetStatus").textContent =
+      `Budget exceeded by ${money(expenses - budget)}.`;
+  } else if (percentage >= 80) {
+    $("budgetStatus").textContent =
+      `${money(budget - expenses)} remains. Spending is getting close to your limit.`;
+  } else {
+    $("budgetStatus").textContent =
+      `${money(budget - expenses)} remains in your budget.`;
+  }
+
+  $("advisorSummary").textContent =
+    `This month: income ${money(data.income)}, expenses ${money(expenses)}, ` +
+    `essential expenses ${money(data.essential_expenses)}, and optional expenses ` +
+    `${money(data.optional_expenses)}. Current-month recorded balance: ${money(data.balance)}.`;
+
+  const alerts = $("advisorAlerts");
+  alerts.replaceChildren();
+
+  (data.alerts || []).forEach((item) => {
+    const box = document.createElement("div");
+    box.className = `advisor-alert ${item.level || "warning"}`;
+    box.textContent = item.message;
+    alerts.appendChild(box);
+  });
+
+  if (!(data.alerts || []).length) {
+    const box = document.createElement("div");
+    box.className = "advisor-alert success";
+    box.textContent = "No alerts right now. Continue tracking your money.";
+    alerts.appendChild(box);
+  }
+
+  const tips = $("advisorTips");
+  tips.replaceChildren();
+
+  (data.tips || []).forEach((tip) => {
+    const li = document.createElement("li");
+    li.textContent = tip;
+    tips.appendChild(li);
+  });
+
+  if (!(data.tips || []).length) {
+    const li = document.createElement("li");
+    li.textContent = "Keep recording transactions and review your budget regularly.";
+    tips.appendChild(li);
+  }
+}
+
 async function loadAll() {
-  const refreshButton = document.querySelector(".section-heading .btn");
-  refreshButton.disabled = true;
+  $("connection").textContent = "Connecting...";
 
   try {
     const [summary, transactionData, monthly, categories] = await Promise.all([
@@ -279,46 +270,57 @@ async function loadAll() {
       api("/api/analytics/categories")
     ]);
 
-    transactions = transactionData.transactions;
     renderSummary(summary);
+    transactions = transactionData.transactions || [];
     renderTransactions();
-    renderMonthlyChart(monthly.months);
-    renderCategoryChart(categories.categories);
-    setConnection(true);
+    renderMonthlyChart(monthly);
+    renderCategoryChart(categories);
+
+    $("connection").textContent = "● Connected";
+    $("connection").style.color = "#35e0b0";
+
+    try {
+      await loadAdvisor();
+    } catch (error) {
+      $("advisorSummary").textContent =
+        `Smart Advisor could not load: ${error.message}. Check the backend deployment.`;
+    }
   } catch (error) {
-    setConnection(false);
-    showMessage(
-      `Could not load data: ${error.message}. Check your Render URL and service logs.`,
-      "error"
-    );
-  } finally {
-    refreshButton.disabled = false;
+    $("connection").textContent = "● Connection error";
+    $("connection").style.color = "#ff7185";
+    showMessage("formMessage", error.message);
+    $("advisorSummary").textContent =
+      `Cannot load financial data: ${error.message}`;
   }
 }
 
-$("transactionForm").addEventListener("submit", async event => {
+async function deleteTransaction(id) {
+  if (!confirm("Delete this transaction?")) return;
+
+  try {
+    await api(`/api/transactions/${id}`, { method: "DELETE" });
+    await loadAll();
+  } catch (error) {
+    alert(`Could not delete transaction: ${error.message}`);
+  }
+}
+
+$("transactionForm").addEventListener("submit", async (event) => {
   event.preventDefault();
 
-  const saveButton = $("saveButton");
-  saveButton.disabled = true;
-  saveButton.textContent = "Saving...";
+  const button = $("saveButton");
+  button.disabled = true;
+  showMessage("formMessage", "Saving transaction...", true);
 
-
-  const selectedType = document.querySelector(
-    'input[name="type"]:checked'
-  ).value;
-  
+  const type = $("type").value;
   const payload = {
     title: $("title").value.trim(),
     amount: Number($("amount").value),
-    type: selectedType,
+    type,
     category: $("category").value,
-    date: $("date").value,
-    priority: selectedType === "income"
-      ? "essential"
-      : $("priority").value
+    priority: type === "income" ? "essential" : $("priority").value,
+    date: $("date").value
   };
-  
 
   try {
     await api("/api/transactions", {
@@ -326,237 +328,95 @@ $("transactionForm").addEventListener("submit", async event => {
       body: JSON.stringify(payload)
     });
 
-    showMessage("✓ Transaction saved successfully!", "success");
-    $("title").value = "";
-    $("amount").value = "";
-    setToday();
+    $("transactionForm").reset();
+    $("date").value = today();
+    showMessage("formMessage", "Transaction saved successfully!", true);
     await loadAll();
   } catch (error) {
-    showMessage(`Could not save: ${error.message}`, "error");
+    showMessage("formMessage", error.message);
   } finally {
-    saveButton.disabled = false;
-    saveButton.textContent = "＋ Save transaction";
+    button.disabled = false;
   }
-});
-
-async function deleteTransaction(id) {
-  if (!confirm("Delete this transaction permanently?")) return;
-
-  try {
-    await api(`/api/transactions/${id}`, { method: "DELETE" });
-    showMessage("Transaction deleted successfully.", "success");
-    await loadAll();
-  } catch (error) {
-    showMessage(`Could not delete: ${error.message}`, "error");
-  }
-}
-
-document.querySelectorAll('input[name="type"]').forEach(radio => {
-  radio.addEventListener("change", updateCategoryOptions);
 });
 
 $("searchInput").addEventListener("input", renderTransactions);
 
-setToday();
-updateCategoryOptions();
-loadAll();
+$("saveBudget").addEventListener("click", async () => {
+  const amount = Number($("monthlyBudget").value);
 
+  if (!Number.isFinite(amount) || amount <= 0) {
+    showMessage("budgetMessage", "Enter a budget greater than zero.");
+    return;
+  }
 
-function currentMonth() {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  try {
+    await api(`/api/budget?month=${currentMonth()}`, {
+      method: "POST",
+      body: JSON.stringify({ amount })
+    });
+
+    showMessage("budgetMessage", "Monthly budget saved!", true);
+    await loadAdvisor();
+  } catch (error) {
+    showMessage("budgetMessage", error.message);
   }
-  
-  function showBudgetMessage(message, type = "") {
-    const el = $("budgetMessage");
-    el.textContent = message;
-    el.className = `form-message ${type}`;
+});
+
+$("checkEmergency").addEventListener("click", async () => {
+  const emergency = Number($("emergencyAmount").value);
+  const reserve = Number($("reservedBills").value);
+
+  if (
+    !Number.isFinite(emergency) || emergency < 0 ||
+    !Number.isFinite(reserve) || reserve < 0
+  ) {
+    alert("Enter valid non-negative amounts.");
+    return;
   }
-  
-  function renderAdvisor(data) {
-    const budget = Number(data.budget) || 0;
-    const expenses = Number(data.expenses) || 0;
-    const balance = Number(data.balance) || 0;
-    const afterEmergency = Number(data.after_emergency) || 0;
-    const afterReserve = Number(data.after_reserve) || 0;
-  
-    const percentage = budget > 0
-      ? Math.round(expenses / budget * 100)
-      : 0;
-  
-    $("budgetPercent").textContent = `${percentage}%`;
-    $("budgetBar").style.width = `${Math.min(100, percentage)}%`;
-  
-    if (!budget) {
-      $("budgetStatus").textContent =
-        "Set a monthly budget to start tracking your spending.";
-      $("budgetBar").style.background = "#a78bfa";
-    } else if (expenses > budget) {
-      $("budgetStatus").textContent =
-        `Over budget by ${money(expenses - budget)}. Review optional spending.`;
-      $("budgetBar").style.background = "#ff8294";
-    } else if (percentage >= 80) {
-      $("budgetStatus").textContent =
-        `${money(budget - expenses)} remains. Your budget is running low.`;
-      $("budgetBar").style.background = "#f6c76b";
-    } else {
-      $("budgetStatus").textContent =
-        `${money(budget - expenses)} remains in your monthly budget.`;
-      $("budgetBar").style.background =
-        "linear-gradient(90deg, #a78bfa, #48dfb0)";
-    }
-  
+
+  try {
+    await loadAdvisor();
+  } catch (error) {
     $("advisorSummary").textContent =
-      `This month: income ${money(data.income)}, expenses ${money(expenses)}, ` +
-      `and balance ${money(balance)}. Essential expenses: ` +
-      `${money(data.essential_expenses)}. Optional expenses: ` +
-      `${money(data.optional_expenses)}. After the planned emergency expense, ` +
-      `${money(afterEmergency)} remains. After your reserved bills, ` +
-      `${money(afterReserve)} remains.`;
-  
-    const alertContainer = $("advisorAlerts");
-    alertContainer.replaceChildren();
-  
-    (data.alerts || []).forEach(alert => {
-      const card = document.createElement("article");
-      card.className = `advisor-alert ${alert.level}`;
-  
-      const heading = document.createElement("h4");
-      heading.textContent = alert.title;
-  
-      const message = document.createElement("p");
-      message.textContent = alert.message;
-  
-      card.append(heading, message);
-      alertContainer.appendChild(card);
-    });
-  
-    const tipsContainer = $("advisorTips");
-    tipsContainer.replaceChildren();
-  
-    (data.tips || []).forEach(tip => {
-      const li = document.createElement("li");
-      li.textContent = tip;
-      tipsContainer.appendChild(li);
-    });
+      `Could not calculate your position: ${error.message}`;
   }
-  
-  async function loadAdvisor() {
-    const month = currentMonth();
-    const emergency = $("emergencyAmount").value || "0";
-    const reserve = $("reservedBills").value || "0";
-  
-    const [budgetData, advisorData] = await Promise.all([
-      api(`/api/budget?month=${encodeURIComponent(month)}`),
-      api(
-        `/api/advisor?month=${encodeURIComponent(month)}` +
-        `&emergency=${encodeURIComponent(emergency)}` +
-        `&reserve=${encodeURIComponent(reserve)}`
-      )
-    ]);
-  
-    // Do not overwrite an amount while the user is editing it.
-    if (document.activeElement !== $("monthlyBudget")) {
-      $("monthlyBudget").value = budgetData.budget || "";
-    }
-  
-    renderAdvisor(advisorData);
-  }
-  
-  async function saveMonthlyBudget() {
-    const button = $("saveBudget");
-    const amount = $("monthlyBudget").value;
-  
-    if (amount.trim() === "" || !Number.isFinite(Number(amount)) ||
-        Number(amount) < 0 || Number(amount) > 1000000000) {
-      showBudgetMessage("Enter a valid budget amount.", "error");
-      return;
-    }
-  
-    button.disabled = true;
-    button.textContent = "Saving...";
-  
-    try {
-      await api(`/api/budget?month=${encodeURIComponent(currentMonth())}`, {
-        method: "POST",
-        body: JSON.stringify({ amount: Number(amount) })
-      });
-  
-      showBudgetMessage("Monthly budget saved successfully.", "success");
-      await loadAdvisor();
-    } catch (error) {
-      showBudgetMessage(`Could not save budget: ${error.message}`, "error");
-    } finally {
-      button.disabled = false;
-      button.textContent = "Save monthly budget";
-    }
-  }
-  
-  async function checkEmergencyExpense() {
-    const emergency = Number($("emergencyAmount").value);
-    const reserve = Number($("reservedBills").value);
-  
-    if (
-      !Number.isFinite(emergency) ||
-      !Number.isFinite(reserve) ||
-      emergency < 0 ||
-      reserve < 0 ||
-      emergency > 1000000000 ||
-      reserve > 1000000000
-    ) {
-      showBudgetMessage(
-        "Enter valid non-negative emergency and reserve amounts.",
-        "error"
-      );
-      return;
-    }
-  
-    const button = $("checkEmergency");
-    button.disabled = true;
-    button.textContent = "Checking...";
-  
-    try {
-      await loadAdvisor();
-      showBudgetMessage(
-        "Emergency expense assessment updated.",
-        "success"
-      );
-    } catch (error) {
-      showBudgetMessage(
-        `Could not calculate your assessment: ${error.message}`,
-        "error"
-      );
-    } finally {
-      button.disabled = false;
-      button.textContent = "Check my financial position";
-    }
-  }
-  
-  $("saveBudget").addEventListener("click", saveMonthlyBudget);
-  $("checkEmergency").addEventListener("click", checkEmergencyExpense);
-  
-  // Recalculate the emergency plan when either value changes.
-  $("emergencyAmount").addEventListener("change", () => {
-    loadAdvisor().catch(error =>
-      showBudgetMessage(`Advisor error: ${error.message}`, "error")
-    );
+});
+
+$("emergencyAmount").addEventListener("change", () => {
+  loadAdvisor().catch(() => {});
+});
+
+$("reservedBills").addEventListener("change", () => {
+  loadAdvisor().catch(() => {});
+});
+
+
+const incomeCategories = ["Salary", "Business", "Investment", "Gift"];
+const expenseCategories = [
+  "Food", "Transport", "Shopping", "Bills",
+  "Education", "Health", "Entertainment", "Other"
+];
+
+function updateCategories() {
+  const type = $("type").value;
+  const categories = type === "income"
+    ? incomeCategories
+    : expenseCategories;
+
+  $("category").replaceChildren();
+
+  categories.forEach((category) => {
+    const option = document.createElement("option");
+    option.value = category;
+    option.textContent = category;
+    $("category").appendChild(option);
   });
-  
-  $("reservedBills").addEventListener("change", () => {
-    loadAdvisor().catch(error =>
-      showBudgetMessage(`Advisor error: ${error.message}`, "error")
-    );
-  });
-  
-  // Reload the advisor whenever the existing dashboard refreshes.
-  const originalLoadAll = loadAll;
-  loadAll = async function () {
-    await originalLoadAll();
-    try {
-      await loadAdvisor();
-    } catch (error) {
-      $("advisorSummary").textContent =
-        `Advisor unavailable: ${error.message}. Check your backend deployment.`;
-    }
-  };
-  
+
+  $("priority").disabled = type === "income";
+}
+
+$("type").addEventListener("change", updateCategories);
+updateCategories();
+
+$("date").value = today();
+loadAll();
