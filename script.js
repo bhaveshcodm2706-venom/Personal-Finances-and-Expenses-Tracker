@@ -1,5 +1,5 @@
 
-const API_URL = "https://YOUR-RENDER-SERVICE.onrender.com";
+const API_URL = " https://personal-finances-and-expenses-tracker.onrender.com";
 
 let transactions = [];
 let monthlyChart = null;
