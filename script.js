@@ -1,5 +1,5 @@
 
-const API_URL = "https://YOUR-RENDER-SERVICE.onrender.com";
+const API_URL = "https://personal-finances-and-expenses-tracker-1.onrender.com";
 
 const $ = (id) => document.getElementById(id);
 
