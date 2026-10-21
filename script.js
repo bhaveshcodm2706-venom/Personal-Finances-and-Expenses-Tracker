@@ -352,3 +352,203 @@ $("searchInput").addEventListener("input", renderTransactions);
 setToday();
 updateCategoryOptions();
 loadAll();
+
+
+function currentMonth() {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  }
+  
+  function showBudgetMessage(message, type = "") {
+    const el = $("budgetMessage");
+    el.textContent = message;
+    el.className = `form-message ${type}`;
+  }
+  
+  function renderAdvisor(data) {
+    const budget = Number(data.budget) || 0;
+    const expenses = Number(data.expenses) || 0;
+    const balance = Number(data.balance) || 0;
+    const afterEmergency = Number(data.after_emergency) || 0;
+    const afterReserve = Number(data.after_reserve) || 0;
+  
+    const percentage = budget > 0
+      ? Math.round(expenses / budget * 100)
+      : 0;
+  
+    $("budgetPercent").textContent = `${percentage}%`;
+    $("budgetBar").style.width = `${Math.min(100, percentage)}%`;
+  
+    if (!budget) {
+      $("budgetStatus").textContent =
+        "Set a monthly budget to start tracking your spending.";
+      $("budgetBar").style.background = "#a78bfa";
+    } else if (expenses > budget) {
+      $("budgetStatus").textContent =
+        `Over budget by ${money(expenses - budget)}. Review optional spending.`;
+      $("budgetBar").style.background = "#ff8294";
+    } else if (percentage >= 80) {
+      $("budgetStatus").textContent =
+        `${money(budget - expenses)} remains. Your budget is running low.`;
+      $("budgetBar").style.background = "#f6c76b";
+    } else {
+      $("budgetStatus").textContent =
+        `${money(budget - expenses)} remains in your monthly budget.`;
+      $("budgetBar").style.background =
+        "linear-gradient(90deg, #a78bfa, #48dfb0)";
+    }
+  
+    $("advisorSummary").textContent =
+      `This month: income ${money(data.income)}, expenses ${money(expenses)}, ` +
+      `and balance ${money(balance)}. Essential expenses: ` +
+      `${money(data.essential_expenses)}. Optional expenses: ` +
+      `${money(data.optional_expenses)}. After the planned emergency expense, ` +
+      `${money(afterEmergency)} remains. After your reserved bills, ` +
+      `${money(afterReserve)} remains.`;
+  
+    const alertContainer = $("advisorAlerts");
+    alertContainer.replaceChildren();
+  
+    (data.alerts || []).forEach(alert => {
+      const card = document.createElement("article");
+      card.className = `advisor-alert ${alert.level}`;
+  
+      const heading = document.createElement("h4");
+      heading.textContent = alert.title;
+  
+      const message = document.createElement("p");
+      message.textContent = alert.message;
+  
+      card.append(heading, message);
+      alertContainer.appendChild(card);
+    });
+  
+    const tipsContainer = $("advisorTips");
+    tipsContainer.replaceChildren();
+  
+    (data.tips || []).forEach(tip => {
+      const li = document.createElement("li");
+      li.textContent = tip;
+      tipsContainer.appendChild(li);
+    });
+  }
+  
+  async function loadAdvisor() {
+    const month = currentMonth();
+    const emergency = $("emergencyAmount").value || "0";
+    const reserve = $("reservedBills").value || "0";
+  
+    const [budgetData, advisorData] = await Promise.all([
+      api(`/api/budget?month=${encodeURIComponent(month)}`),
+      api(
+        `/api/advisor?month=${encodeURIComponent(month)}` +
+        `&emergency=${encodeURIComponent(emergency)}` +
+        `&reserve=${encodeURIComponent(reserve)}`
+      )
+    ]);
+  
+    // Do not overwrite an amount while the user is editing it.
+    if (document.activeElement !== $("monthlyBudget")) {
+      $("monthlyBudget").value = budgetData.budget || "";
+    }
+  
+    renderAdvisor(advisorData);
+  }
+  
+  async function saveMonthlyBudget() {
+    const button = $("saveBudget");
+    const amount = $("monthlyBudget").value;
+  
+    if (amount.trim() === "" || !Number.isFinite(Number(amount)) ||
+        Number(amount) < 0 || Number(amount) > 1000000000) {
+      showBudgetMessage("Enter a valid budget amount.", "error");
+      return;
+    }
+  
+    button.disabled = true;
+    button.textContent = "Saving...";
+  
+    try {
+      await api(`/api/budget?month=${encodeURIComponent(currentMonth())}`, {
+        method: "POST",
+        body: JSON.stringify({ amount: Number(amount) })
+      });
+  
+      showBudgetMessage("Monthly budget saved successfully.", "success");
+      await loadAdvisor();
+    } catch (error) {
+      showBudgetMessage(`Could not save budget: ${error.message}`, "error");
+    } finally {
+      button.disabled = false;
+      button.textContent = "Save monthly budget";
+    }
+  }
+  
+  async function checkEmergencyExpense() {
+    const emergency = Number($("emergencyAmount").value);
+    const reserve = Number($("reservedBills").value);
+  
+    if (
+      !Number.isFinite(emergency) ||
+      !Number.isFinite(reserve) ||
+      emergency < 0 ||
+      reserve < 0 ||
+      emergency > 1000000000 ||
+      reserve > 1000000000
+    ) {
+      showBudgetMessage(
+        "Enter valid non-negative emergency and reserve amounts.",
+        "error"
+      );
+      return;
+    }
+  
+    const button = $("checkEmergency");
+    button.disabled = true;
+    button.textContent = "Checking...";
+  
+    try {
+      await loadAdvisor();
+      showBudgetMessage(
+        "Emergency expense assessment updated.",
+        "success"
+      );
+    } catch (error) {
+      showBudgetMessage(
+        `Could not calculate your assessment: ${error.message}`,
+        "error"
+      );
+    } finally {
+      button.disabled = false;
+      button.textContent = "Check my financial position";
+    }
+  }
+  
+  $("saveBudget").addEventListener("click", saveMonthlyBudget);
+  $("checkEmergency").addEventListener("click", checkEmergencyExpense);
+  
+  // Recalculate the emergency plan when either value changes.
+  $("emergencyAmount").addEventListener("change", () => {
+    loadAdvisor().catch(error =>
+      showBudgetMessage(`Advisor error: ${error.message}`, "error")
+    );
+  });
+  
+  $("reservedBills").addEventListener("change", () => {
+    loadAdvisor().catch(error =>
+      showBudgetMessage(`Advisor error: ${error.message}`, "error")
+    );
+  });
+  
+  // Reload the advisor whenever the existing dashboard refreshes.
+  const originalLoadAll = loadAll;
+  loadAll = async function () {
+    await originalLoadAll();
+    try {
+      await loadAdvisor();
+    } catch (error) {
+      $("advisorSummary").textContent =
+        `Advisor unavailable: ${error.message}. Check your backend deployment.`;
+    }
+  };
+  

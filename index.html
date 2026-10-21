@@ -17,6 +17,9 @@
       <a class="nav active" href="#dashboard">▦ &nbsp; Dashboard</a>
       <a class="nav" href="#transactions">↔ &nbsp; Transactions</a>
       <a class="nav" href="#analytics">◔ &nbsp; Analytics</a>
+      
+      <a class="nav" href="#smart-advisor">✦ &nbsp; Smart Advisor</a>
+
       <div class="side-bottom">
         <div class="tip">
           <span>✦ Smart tip</span>
@@ -130,8 +133,15 @@
                 </div>
               </div>
 
-              <label for="date">Transaction date</label>
-              <input id="date" name="date" type="date" required>
+            <!-- Step 2: Expense Priority -->
+            <label for="priority">Expense priority</label>
+            <select id="priority" name="priority">
+              <option value="essential">Essential — rent, bills, groceries</option>
+              <option value="optional">Optional — shopping, entertainment</option>
+            </select>
+
+            <label for="date">Transaction date</label>
+            <input id="date" name="date" type="date" required>
               <button class="btn primary full" id="saveButton" type="submit">＋ Save transaction</button>
               <p id="formMessage" class="form-message" role="status"></p>
             </form>
