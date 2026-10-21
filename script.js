@@ -1,6 +1,5 @@
 
-const API_URL = " https://personal-finances-and-expenses-tracker.onrender.com";
-
+const API_URL = "https://personal-finances-and-expenses-tracker.onrender.com"
 let transactions = [];
 let monthlyChart = null;
 let categoryChart = null;
@@ -304,13 +303,22 @@ $("transactionForm").addEventListener("submit", async event => {
   saveButton.disabled = true;
   saveButton.textContent = "Saving...";
 
+
+  const selectedType = document.querySelector(
+    'input[name="type"]:checked'
+  ).value;
+  
   const payload = {
     title: $("title").value.trim(),
     amount: Number($("amount").value),
-    type: document.querySelector('input[name="type"]:checked').value,
+    type: selectedType,
     category: $("category").value,
-    date: $("date").value
+    date: $("date").value,
+    priority: selectedType === "income"
+      ? "essential"
+      : $("priority").value
   };
+  
 
   try {
     await api("/api/transactions", {
