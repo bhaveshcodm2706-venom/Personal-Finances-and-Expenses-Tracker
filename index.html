@@ -1,0 +1,163 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#101426">
+  <title>FinTrack | Personal Finance</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-icon">F</span> FinTrack</div>
+      <p class="nav-label">WORKSPACE</p>
+      <a class="nav active" href="#dashboard">▦ &nbsp; Dashboard</a>
+      <a class="nav" href="#transactions">↔ &nbsp; Transactions</a>
+      <a class="nav" href="#analytics">◔ &nbsp; Analytics</a>
+      <div class="side-bottom">
+        <div class="tip">
+          <span>✦ Smart tip</span>
+          <p>Small savings today can create big opportunities tomorrow.</p>
+        </div>
+        <p class="side-caption">PERSONAL FINANCE MANAGER</p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">YOUR MONEY, MADE SIMPLE</p>
+          <h1>Financial Overview</h1>
+          <p class="muted">Track your money. Build better habits.</p>
+        </div>
+        <div class="top-right">
+          <span class="live-dot"></span>
+          <span id="connection">Connecting...</span>
+          <div class="avatar">FT</div>
+        </div>
+      </header>
+
+      <section id="dashboard">
+        <div class="welcome">
+          <div>
+            <p class="welcome-tag">YOUR FINANCIAL SPACE</p>
+            <h2>Make every rupee count.</h2>
+            <p>Understand your spending and stay in control.</p>
+          </div>
+          <div class="welcome-art">₹<span>↗</span></div>
+        </div>
+
+        <div class="section-heading">
+          <div><h2>Overview</h2><p class="muted">Your complete financial snapshot</p></div>
+          <button class="btn secondary" onclick="loadAll()">↻ Refresh</button>
+        </div>
+
+        <div class="stats">
+          <article class="stat income">
+            <div class="stat-top"><span>Total income</span><span class="stat-icon">↙</span></div>
+            <h2 id="totalIncome">₹0.00</h2>
+            <p>Money received</p>
+          </article>
+          <article class="stat expense">
+            <div class="stat-top"><span>Total expenses</span><span class="stat-icon">↗</span></div>
+            <h2 id="totalExpense">₹0.00</h2>
+            <p>Money spent</p>
+          </article>
+          <article class="stat balance">
+            <div class="stat-top"><span>Available balance</span><span class="stat-icon">₹</span></div>
+            <h2 id="currentBalance">₹0.00</h2>
+            <p>Income minus expenses</p>
+          </article>
+          <article class="stat savings">
+            <div class="stat-top"><span>Savings rate</span><span class="stat-icon">✦</span></div>
+            <h2 id="savingsRate">0%</h2>
+            <p>Share of income retained</p>
+          </article>
+        </div>
+
+        <div class="content-grid" id="analytics">
+          <section class="panel">
+            <div class="panel-head">
+              <div><h3>Income vs Expenses</h3><p class="muted">Monthly comparison</p></div>
+            </div>
+            <div class="chart-wrap"><canvas id="monthlyChart"></canvas></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <div><h3>Where your money goes</h3><p class="muted">Expense categories</p></div>
+            </div>
+            <div class="chart-wrap"><canvas id="categoryChart"></canvas></div>
+            <p id="categoryEmpty" class="empty-chart">Add an expense to see your breakdown.</p>
+          </section>
+        </div>
+
+        <div class="content-grid lower-grid">
+          <section class="panel" id="add-transaction">
+            <div class="panel-head">
+              <div><h3>Add transaction</h3><p class="muted">Record money in or money out</p></div>
+              <span class="form-symbol">＋</span>
+            </div>
+
+            <form id="transactionForm">
+              <label for="type">Transaction type</label>
+              <div class="type-switch">
+                <label class="type-option"><input type="radio" name="type" value="income" checked> <span>↙ Income</span></label>
+                <label class="type-option"><input type="radio" name="type" value="expense"> <span>↗ Expense</span></label>
+              </div>
+
+              <label for="title">Transaction title</label>
+              <input id="title" name="title" placeholder="e.g. Monthly salary" maxlength="100" required>
+
+              <div class="form-row">
+                <div><label for="amount">Amount (₹)</label>
+                  <input id="amount" name="amount" type="number" min="0.01" max="1000000000" step="0.01" placeholder="0.00" required>
+                </div>
+                <div><label for="category">Category</label>
+                  <select id="category" name="category" required>
+                    <option value="Salary">Salary</option>
+                    <option value="Food">Food</option>
+                    <option value="Transport">Transport</option>
+                    <option value="Shopping">Shopping</option>
+                    <option value="Bills">Bills</option>
+                    <option value="Education">Education</option>
+                    <option value="Health">Health</option>
+                    <option value="Entertainment">Entertainment</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              <label for="date">Transaction date</label>
+              <input id="date" name="date" type="date" required>
+              <button class="btn primary full" id="saveButton" type="submit">＋ Save transaction</button>
+              <p id="formMessage" class="form-message" role="status"></p>
+            </form>
+          </section>
+
+          <section class="panel" id="transactions">
+            <div class="panel-head">
+              <div><h3>Recent transactions</h3><p class="muted">Your financial activity</p></div>
+            </div>
+            <input id="searchInput" class="search" placeholder="⌕ Search transactions..." aria-label="Search transactions">
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Transaction</th><th>Amount</th><th>Date</th><th></th></tr></thead>
+                <tbody id="transactionList">
+                  <tr><td colspan="4" class="empty">Loading transactions...</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p id="transactionCount" class="muted count"></p>
+          </section>
+        </div>
+
+        <footer>FinTrack · Personal Finance & Expense Tracker <span>Built for smarter money management.</span></footer>
+      </section>
+    </main>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>
